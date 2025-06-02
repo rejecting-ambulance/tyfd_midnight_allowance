@@ -8,11 +8,16 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 #excel操作
 import openpyxl
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Alignment, Border, Side, Font, PatternFill
 #輔助
 from datetime import datetime
+from datetime import timedelta
 import time
 import sys
 import os
+import pandas as pd
 import json
 
 """
@@ -61,6 +66,25 @@ def get_exe_dir():  #取得 `.exe` 真正所在的目錄
 def load_accounts(config_path="config.json"):   #載入
     with open(config_path, "r", encoding="utf-8") as f: 
         return json.load(f)
+
+def get_setting_date(config):
+    full_date = f'{config['year']}年{config["month"]}月'
+
+    return full_date  # 沒找到就原樣回傳
+
+def get_full_unit_name(name, config):
+    flat_dic = flatten_unit_dic(config['unit_dic'])
+    return flat_dic.get(name, name)  # 沒找到就原樣回傳
+
+def flatten_unit_dic(unit_dic):
+    flat_dic = {}
+    for major, data in unit_dic.items():
+        # 中隊名稱 → 完整名稱
+        flat_dic[major] = data['full_name']
+        # 分隊名稱 → 中隊-分隊完整名稱
+        for sub, sub_full in data.get('sub_units', {}).items():
+            flat_dic[sub] = f"{data['full_name']}{sub_full}"
+    return flat_dic
 
 def dropdown_by_value(id , value , driver, wait):   #一些瀏覽器操作區塊
     dropdown1 = wait.until(EC.visibility_of_element_located((By.ID, id)))   
@@ -120,6 +144,81 @@ def insert_type(arr, new_value):
             arr[8] = f"{arr[8]},{new_value}"  # 逗號隔開
     return arr
 
+def format_excel(output_path):
+    wb = load_workbook(output_path)
+    checkmark = '☑'
+
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+
+        # 設定欄寬
+        col_widths = [15, 8, 15, 15, 15, 8, 8, 8, 18, 18]
+        for i, width in enumerate(col_widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = width
+
+        # 插入一行做標題，移動原有標題到第2行，資料到第3行
+        ws.insert_rows(1)
+        total_cols = ws.max_column
+        merge_range = f"A1:{get_column_letter(total_cols)}1"
+        ws.merge_cells(merge_range)
+        title = f'桃園市政府消防局{get_full_unit_name(sheet_name, load_accounts())}{get_setting_date(load_accounts())}深夜危勞性勤務津貼個人申請表'
+        ws['A1'] = title
+
+        # 設定標題字型、大小、置中
+        ws['A1'].font = Font(size=16, bold=True)
+        ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+        # 設定標題字型、大小、置中（標楷體）
+        ws['A1'].font = Font(name='標楷體', size=16, bold=True)
+        ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+        ws.row_dimensions[1].height = 30
+
+
+        # 淺藍底色填充（標題行第2行）
+        header_fill = PatternFill(fill_type='solid', fgColor='C7DDFF')
+
+        # 資料區統一字型、大小、置中、自動換行，加框線
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=total_cols):
+            for cell in row:
+                cell.font = Font(name = '標楷體',size=12)
+                cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                cell.border = thin_border
+                if cell.row == 2:
+                    cell.fill = header_fill
+
+        # 填入「確認申請」欄打勾符號（假設倒數第3欄）
+        confirm_col = total_cols - 2
+        for row in range(3, ws.max_row + 1):
+            ws.cell(row=row, column=confirm_col).value = checkmark
+
+        # 同一人姓名，合併「申請人核章」「備註」欄
+        name_col = 2  # 第3欄：姓名
+        apply_col = total_cols - 1  # 倒數第2欄：申請人核章
+        remark_col = total_cols     # 最後一欄：備註
+
+        current_person = None
+        merge_start = 3  # 從資料開始行
+        for row in range(3, ws.max_row + 2):  # +2 為了最後一段也觸發
+            name = ws.cell(row, name_col).value if row <= ws.max_row else None
+
+            if name != current_person:
+                if row - merge_start > 1:
+                    apply_range = f"{get_column_letter(apply_col)}{merge_start}:{get_column_letter(apply_col)}{row - 1}"
+                    remark_range = f"{get_column_letter(remark_col)}{merge_start}:{get_column_letter(remark_col)}{row - 1}"
+                    ws.merge_cells(apply_range)
+                    ws.merge_cells(remark_range)
+                current_person = name
+                merge_start = row
+
+    wb.save(output_path)
+    print(f"✅ Excel Sign sheet exported successfully to：{output_path}")
+
+
 
 def comapre_times(driver, wait, data, unit):      #爬蟲裡面的比對時間區段
 
@@ -140,9 +239,10 @@ def comapre_times(driver, wait, data, unit):      #爬蟲裡面的比對時間�
     
     table_content = []   #爬到的內容
     wrong_array = []    #要被剃除的內容
+    
 
-    for row in rows:    
-        
+    for index, row in enumerate(rows):
+                    
         cells = row.find_elements(By.TAG_NAME, 'td')
         if not cells:
             cells = row.find_elements(By.TAG_NAME, 'th')
@@ -159,74 +259,157 @@ def comapre_times(driver, wait, data, unit):      #爬蟲裡面的比對時間�
         # check the background color of the third cell
         bg_color = row.value_of_css_property('background-color')
         if bg_color.startswith('rgba(255, 147, 147'):
-            wrong_type = "案號相同"
-            cell_values.append(wrong_type)
-            wrong_array.append(cell_values)
+            print(f"⚠️ Rows {index - 1} duplicate : {cell_values[2]}")
+            wrong_type = "案號重複(Red)"
+            cell_values = insert_type(cell_values, wrong_type)
 
 
         table_content.append(cell_values)
 
     if len(table_content) == 0:
         print('🚑查無資料')
-         
-    # Compare each row to the next row
-    new_person = ''
-    for i in range(len(table_content) - 1):
-        current = table_content[i]
-        next_row = table_content[i + 1]
 
-        person_current = current[2]
-        person_next = next_row[2]
         
-        if new_person != person_current:
-            new_person = person_current
-            change = 1
-            print('')
-        else:
-            change = 0
-
-        # Only compare if same person
-        if person_current != person_next and change :
-            print(f"✅ {person_current} — row {i + 1} correct")
-            continue
-        elif person_current != person_next :
-            continue
-
-        try:
+    new_person = ''
+    person_number = 0
+    for i in range(len(table_content)):
+        if i == len(table_content) - 1:
+        
+            current = table_content[i]
             try:
-                start_next = datetime.strptime(next_row[4], "%Y/%m/%d %H:%M")
+                start_current = datetime.strptime(current[4], "%Y/%m/%d %H:%M")
             except ValueError:
-                print(f"⚠️ 時間格式錯誤：{next_row[4]}")
+                print(f"⚠️ 時間格式錯誤：{current[4]}")
                 continue
+
             try:
                 end_current = datetime.strptime(current[5], "%Y/%m/%d %H:%M")
             except ValueError:
                 print(f"⚠️ 時間格式錯誤：{current[5]}")
                 continue
+
+            person_current = current[2]
+
+            if new_person != person_current:    # Check whether the next people
+                new_person = person_current
+                change = 1
+                person_number = i
+                print('')
+            else:
+                change = 0
+
+            try:
+                # Compare the short or long term
+                current_difference = end_current - start_current
+
+                if current_difference <= timedelta(minutes=5):
+                    print(f"⚠️ Row  {i + 1} too short : {person_current}-{i + 1 - person_number}")
+                    wrong_type = f"區間過短(<5分鐘) (no.{i + 1 - person_number})"
+                    table_content[i] = insert_type(table_content[i], wrong_type)
+                
+                elif current_difference >= timedelta(hours=6):
+                    print(f"⚠️ Row  {i + 1} too long : {person_current}-{i + 1 - person_number}")
+                    wrong_type = f"區間過長(>6小時) (no.{i + 1 - person_number})"
+                    table_content[i] = insert_type(table_content[i], wrong_type)
+                     
+            except Exception as e:
+                print(f"⚠️ Rows {i + 1} and {i + 2} : Error comparing ")
+                print(f"   {current}")
+                print(f"   {next_row}")
+                print(f"   Error: {e}")
+                wrong_type = f"查詢錯誤(no.{i + 1 - person_number}.{i + 2 - person_number})"
+                table_content[i] = insert_type(table_content[i], wrong_type)
+                table_content[i + 1] = insert_type(table_content[i + 1], wrong_type)    
+
+            if change :   # Only compare for who has one record
+                print(f"✅ Row  {i + 1} correct : {person_current}-{i + 1 - person_number}")
+                             
+            break
+
+
+        current = table_content[i]
+        next_row = table_content[i + 1]
+        
+        try:
+            start_next = datetime.strptime(next_row[4], "%Y/%m/%d %H:%M")
+        except ValueError:
+            print(f"⚠️ 時間格式錯誤：{next_row[4]}")
+            continue
+        
+        try:
+            start_current = datetime.strptime(current[4], "%Y/%m/%d %H:%M")
+        except ValueError:
+            print(f"⚠️ 時間格式錯誤：{current[4]}")
+            continue
+
+        try:
+            end_current = datetime.strptime(current[5], "%Y/%m/%d %H:%M")
+        except ValueError:
+            print(f"⚠️ 時間格式錯誤：{current[5]}")
+            continue
+
+
+        person_current = current[2]
+        person_next = next_row[2]
+
+        if new_person != person_current:    # Check whether the next people
+            new_person = person_current
+            change = 1
+            person_number = i
+            print('')
+        else:
+            change = 0
+
+        if person_current != person_next and change :   # Only compare for who has one record
+            print(f"✅ Row  {i + 1} correct : {person_current}-{i + 1 - person_number}")
+            continue
+        elif person_current != person_next :
+            continue
+
+        try:
+            # Compare the short or long term
+            current_difference = end_current - start_current
+
+            if current_difference <= timedelta(minutes=5):
+                print(f"⚠️ Row  {i + 1} too short : {person_current}-{i + 1 - person_number}")
+                wrong_type = f"區間過短(<5分鐘) (no.{i + 1 - person_number})"
+                table_content[i] = insert_type(table_content[i], wrong_type)
             
-            if start_next <= end_current:
-                print(f"⚠️ {person_current} —  rows {i + 1} and {i + 2} overlap")
-                wrong_type = "時間重疊"
+            elif current_difference >= timedelta(hours=6):
+                print(f"⚠️ Row  {i + 1} too long : {person_current}-{i + 1 - person_number}")
+                wrong_type = f"區間過長(>6小時) (no.{i + 1 - person_number})"
+                table_content[i] = insert_type(table_content[i], wrong_type)
+
+            
+            # Compare exception
+            if start_next <= end_current:       
+                
+                print(f"⚠️ Rows {i + 1} and {i + 2} overlap : {person_current}-{i + 1 - person_number}.{i + 2 - person_number}")
+                wrong_type = f"時間重疊 (no.{i + 1 - person_number}.{i + 2 - person_number})"
                 table_content[i] = insert_type(table_content[i], wrong_type)
                 table_content[i + 1] = insert_type(table_content[i + 1], wrong_type)                
-                wrong_array.append(table_content[i])
-                wrong_array.append(table_content[i + 1])
+
             elif start_next > end_current:
-                print(f"✅ {person_current} — rows {i + 1} and {i + 2} correct")
+                print(f"✅ Rows {i + 1} and {i + 2} correct : {person_current}-{i + 1 - person_number}.{i + 2 - person_number}")
+
+
         except Exception as e:
-            print(f"⚠️ Error comparing rows {i + 1} and {i + 2}")
+            print(f"⚠️ Rows {i + 1} and {i + 2} : Error comparing ")
             print(f"   {current}")
             print(f"   {next_row}")
             print(f"   Error: {e}")
-            wrong_type = "查詢錯誤"
+            wrong_type = f"查詢錯誤(no.{i + 1 - person_number}.{i + 2 - person_number})"
             table_content[i] = insert_type(table_content[i], wrong_type)
             table_content[i + 1] = insert_type(table_content[i + 1], wrong_type)
 
-            wrong_array.append(table_content[i])
-            wrong_array.append(table_content[i + 1])
+
+    for row in table_content:
+        
+        if len(row) >= 9 and row[8]:
+            wrong_array.append(row)
 
     print('\n')
-    return wrong_array
+    return wrong_array, table_content
 
 
 
@@ -281,12 +464,15 @@ def bug(data):
 
 
 
-    export_sheet = []
+    except_sheet = []
+    sign_sheet = []
+
     dropdown_id = '_selDeptno'
     
     for i in range(len(Select(driver.find_element(By.ID, dropdown_id)).options)):
+    #for i in range(2):
         # REFRESH the dropdown each loop
-        dropdown_element = wait.until(EC.presence_of_element_located((By.ID, dropdown_id))        )
+        dropdown_element = wait.until(EC.presence_of_element_located((By.ID, dropdown_id)))
         dropdown = Select(dropdown_element)
 
         # REFRESH the option list each loop
@@ -298,19 +484,20 @@ def bug(data):
         dropdown.select_by_value(value)
         print(f"🔽 Selecting: {text} (value={value})")
 
-        wrong = comapre_times(driver, wait, data, text)
+        wrong, money_sheet = comapre_times(driver, wait, data, text)
         for row in wrong:
-            export_sheet.append(row)
+            except_sheet.append(row)
+        for row in money_sheet:
+            sign_sheet.append(row)
 
-    
-    clean_sheet = remove_duplicates(export_sheet)
+   
+    clean_sheet = remove_duplicates(except_sheet)
     
     # Create a new workbook and sheet
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Exception"
 
-    # Optional: Write a header if your ex_table has consistent structure
     header = ["單位","日期", "姓名", "勤務項目", "開始時間", "結束時間", "深夜勤務時數", "金額", "錯誤種類"]
     ws.append(header)
 
@@ -318,14 +505,43 @@ def bug(data):
     for row in clean_sheet:
         ws.append(row)
 
+    sheet_unit = clean_sheet[0][0]
     # Save Excel file
-    output_path = os.path.join(os.getcwd(), f"深夜食堂 - {data['unit']}.xlsx")
+    output_path = os.path.join(os.getcwd(), f"深夜食堂 - {sheet_unit}.xlsx")
     wb.save(output_path)
 
     print(f"✅ Excel exported successfully to {output_path}")
 
     driver.close()
     driver.quit()
+
+    # 欄位名稱
+    columns = ["單位","日期", "姓名", "勤務項目", "開始時間", "結束時間", "深夜勤務時數", "金額", "錯誤種類"]
+
+    # 建立 DataFrame
+    df = pd.DataFrame(sign_sheet, columns=columns)
+
+    # 依單位分組
+    grouped = df.groupby('單位')
+
+    # 建立 Excel 檔
+    output_path2 = '深夜食堂 - 千層明太子.xlsx'
+    with pd.ExcelWriter(output_path2, engine='openpyxl') as writer:
+        for unit, group in grouped:
+            # 去掉「單位」欄位
+            group_no_unit = group.drop(columns=['單位', '錯誤種類'])
+            # 加上三個新欄位，預設空值
+            group_no_unit['確認申請'] = ''
+            group_no_unit['申請人核章'] = ''
+            group_no_unit['備註'] = ''
+            # 寫入分頁
+            group_no_unit.to_excel(writer, sheet_name=unit, index=False)
+
+    # ⭐ 用 openpyxl 處理合併單元格和加標題
+    format_excel(output_path2)
+
+
+
 
     os.startfile(output_path)
 
