@@ -1,4 +1,7 @@
 發布版/
+build/
+dist/
+
 test.txt
 improved_code.py
 
@@ -6,4 +9,4 @@ improved_code.py
 
 *.ico
 *.xlsx
-*.exe
+*.spec

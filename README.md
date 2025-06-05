@@ -1,6 +1,7 @@
-# TYFD_-
-### 深夜食堂，for TYFD firefighters
-### Burn the midnight oil.
+# TYFD_深夜危勞性勤務津貼處理器
+
+### The restaurant for TYFD firefighters
+### Let's burn the midnight oil.
 
 ## 使用方式
 1. 設定 config.json ，帳號、密碼、查詢年、月(以記事本開啟)
@@ -24,7 +25,9 @@
 * 結束時間與下一筆開始時間重疊
 * 當筆過長或過短，確認有無實際出勤(工作紀錄)
   
-#### 全都是紅蘿蔔，你喜歡嗎？
+#### 你喜歡紅蘿蔔嗎？
+* If all correct, the carrot will appear.
+* 如果全對，你會發現胡蘿蔔喔。
 
 * Developer : ChatGPT
 * Contact : zhandezhonghenry@gmail.com

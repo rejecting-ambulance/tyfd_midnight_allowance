@@ -133,7 +133,7 @@ def str_line(show):     #大區段分隔線
     dash_len = int((max_len - len(show))/2)
     dash = ''
     for i in range(dash_len):
-        dash = dash + '-'
+        dash = dash + '='
     show = dash + show + dash + '\n'
     
     return show
@@ -232,7 +232,7 @@ def format_excel(output_path):
                 merge_start = row
 
     wb.save(output_path)
-    print(f"✅ Excel Sign sheet exported successfully to：{output_path}")
+    print(f"✅ Excel Sign sheet exported successfully to： {output_path}")
 
 
 
@@ -457,8 +457,9 @@ def bug(data):
     try:
         wait.until(EC.presence_of_element_located((By.NAME, 'ehrFrame')))
         frameM = driver.find_element(By.NAME, 'ehrFrame')
-    except:
-        raise Exception('帳密錯誤，請確認config.json')
+    except Exception as e:
+        input(f'{e}帳密錯誤，請確認config.json')
+        raise Exception
 
     print(str_line('登入成功'))
     
@@ -543,9 +544,10 @@ def bug(data):
 
     # Save Excel file
     output_path = os.path.join(os.getcwd(), f"深夜食堂 - 修ㄟ味噌湯(修正).xlsx")
+    output_path = f"深夜食堂 - 修ㄟ味噌湯(修正).xlsx"
     wb.save(output_path)
 
-    print(f"✅ Excel exported successfully to {output_path}")
+    print(f"✅ Excel exported successfully to： {output_path}")
 
 
 
