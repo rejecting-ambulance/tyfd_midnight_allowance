@@ -113,6 +113,21 @@ def click_by_xpath(xpath , driver, wait):
     button1 = driver.find_element(By.XPATH, xpath)
     button1.click()
 
+def select_click_xpath(xpath_1, xpath_2, driver, wait, msg1 =  '', msg2 = ''):
+    try:
+        element = wait.until(EC.element_to_be_clickable((By.XPATH, xpath_1)))
+        element.click()
+        print(msg1)
+    except Exception as e:
+        try:
+            element = wait.until(EC.element_to_be_clickable((By.XPATH, xpath_2)))
+            element.click()
+            print(msg2)
+        except Exception as e:
+            print(f"{e}：{xpath_1}、{xpath_2} 都找不到")
+    
+
+
 def str_line(show):     #大區段分隔線
     max_len = 50
     dash_len = int((max_len - len(show))/2)
@@ -135,14 +150,15 @@ def remove_duplicates(data):       #移除重複列
     return result
 
 def insert_type(arr, new_value):
-    if len(arr) < 9 or arr[8] in (None, ''):
+    if len(arr) < 9:
         arr.append(new_value)
     else:
-        # 拆解現有內容成 set 來比對，避免重複
-        existing_values = set(arr[8].split(','))
-        if new_value not in existing_values:
-            arr[8] = f"{arr[8]},{new_value}"  # 逗號隔開
+        # 第9位是合併欄
+        existing_values = set(arr[8].split(',')) if arr[8] else set()
+        if new_value and new_value not in existing_values:
+            arr[8] = f"{arr[8]},{new_value}".strip(',')
     return arr
+
 
 def format_excel(output_path):
     wb = load_workbook(output_path)
@@ -240,7 +256,7 @@ def comapre_times(driver, wait, data, unit):      #爬蟲裡面的比對時間�
     table_content = []   #爬到的內容
     wrong_array = []    #要被剃除的內容
     
-
+    #系統爬內容，抓紅底
     for index, row in enumerate(rows):
                     
         cells = row.find_elements(By.TAG_NAME, 'td')
@@ -270,7 +286,7 @@ def comapre_times(driver, wait, data, unit):      #爬蟲裡面的比對時間�
         print('🚑查無資料')
 
         
-    new_person = ''
+    origin_person = ''
     person_number = 0
     for i in range(len(table_content)):
         if i == len(table_content) - 1:
@@ -290,8 +306,8 @@ def comapre_times(driver, wait, data, unit):      #爬蟲裡面的比對時間�
 
             person_current = current[2]
 
-            if new_person != person_current:    # Check whether the next people
-                new_person = person_current
+            if origin_person != person_current:    # Check whether the next people
+                origin_person = person_current
                 change = 1
                 person_number = i
                 print('')
@@ -323,6 +339,7 @@ def comapre_times(driver, wait, data, unit):      #爬蟲裡面的比對時間�
 
             if change :   # Only compare for who has one record
                 print(f"✅ Row  {i + 1} correct : {person_current}-{i + 1 - person_number}")
+                table_content[i] = insert_type(table_content[i], '')
                              
             break
 
@@ -352,19 +369,15 @@ def comapre_times(driver, wait, data, unit):      #爬蟲裡面的比對時間�
         person_current = current[2]
         person_next = next_row[2]
 
-        if new_person != person_current:    # Check whether the next people
-            new_person = person_current
+        if origin_person != person_current:    # Check whether the new person
+            origin_person = person_current
             change = 1
             person_number = i
             print('')
         else:
             change = 0
 
-        if person_current != person_next and change :   # Only compare for who has one record
-            print(f"✅ Row  {i + 1} correct : {person_current}-{i + 1 - person_number}")
-            continue
-        elif person_current != person_next :
-            continue
+
 
         try:
             # Compare the short or long term
@@ -380,8 +393,17 @@ def comapre_times(driver, wait, data, unit):      #爬蟲裡面的比對時間�
                 wrong_type = f"區間過長(>6小時) (no.{i + 1 - person_number})"
                 table_content[i] = insert_type(table_content[i], wrong_type)
 
-            
-            # Compare exception
+
+
+            if person_current != person_next and change :   # Only compare for who has one record
+                print(f"✅ Row  {i + 1} correct : {person_current}-{i + 1 - person_number}")
+                table_content[i] = insert_type(table_content[i], '')
+                continue
+            elif person_current != person_next :   #if next person change, not to compare
+                continue
+
+
+            # Compare colapse
             if start_next <= end_current:       
                 
                 print(f"⚠️ Rows {i + 1} and {i + 2} overlap : {person_current}-{i + 1 - person_number}.{i + 2 - person_number}")
@@ -391,6 +413,9 @@ def comapre_times(driver, wait, data, unit):      #爬蟲裡面的比對時間�
 
             elif start_next > end_current:
                 print(f"✅ Rows {i + 1} and {i + 2} correct : {person_current}-{i + 1 - person_number}.{i + 2 - person_number}")
+                table_content[i] = insert_type(table_content[i], '')
+                table_content[i + 1] = insert_type(table_content[i + 1], '')
+                
 
 
         except Exception as e:
@@ -445,8 +470,12 @@ def bug(data):
     frameL2 = driver.find_element(By.NAME, 'contentSidemenu')
     driver.switch_to.frame(frameL2)
 
-    click_by_name('nodeIcon17', driver, wait)   #轉換左方選單
-    click_by_xpath('//*[@id="item23"]/tbody/tr/td[2]/a/font', driver, wait)   #勤務基準表按鈕
+    #click_by_name('nodeIcon17', driver, wait)   #轉換左方選單
+    #click_by_xpath('//*[@id="item23"]/tbody/tr/td[2]/a/font', driver, wait)   #深夜危勞按鈕
+
+    select_click_xpath('//*[@id="folder17"]/tbody/tr[1]/td/a[1]/img', '//*[@id="folder14"]/tbody/tr[1]/td/a[1]/img', driver, wait)  #相關業務
+    select_click_xpath('//*[@id="item23"]/tbody/tr/td[2]/a/font', '//*[@id="item20"]/tbody/tr/td[2]/a/font', driver, wait, '沒記錯的話，上次見到你是一個月前呢，大隊承辦', '歡迎回來，分隊承辦！')  #深夜危勞性勤務津貼個人申請表
+
 
     #轉換右方主要內容
     driver.switch_to.parent_frame()
@@ -470,7 +499,7 @@ def bug(data):
     dropdown_id = '_selDeptno'
     
     for i in range(len(Select(driver.find_element(By.ID, dropdown_id)).options)):
-    #for i in range(2):
+    #for i in range(2): #for test
         # REFRESH the dropdown each loop
         dropdown_element = wait.until(EC.presence_of_element_located((By.ID, dropdown_id)))
         dropdown = Select(dropdown_element)
@@ -490,6 +519,9 @@ def bug(data):
         for row in money_sheet:
             sign_sheet.append(row)
 
+
+    driver.close()
+    driver.quit()
    
     clean_sheet = remove_duplicates(except_sheet)
     
@@ -498,34 +530,33 @@ def bug(data):
     ws = wb.active
     ws.title = "Exception"
 
+    # 欄位名稱
     header = ["單位","日期", "姓名", "勤務項目", "開始時間", "結束時間", "深夜勤務時數", "金額", "錯誤種類"]
     ws.append(header)
 
-    # Write data rows
-    for row in clean_sheet:
-        ws.append(row)
+    if clean_sheet:
+        # Write data rows
+        for row in clean_sheet:
+            ws.append(row)
+    else:
+        ws['A2'] = 'All Carrot'
 
-    sheet_unit = clean_sheet[0][0]
     # Save Excel file
-    output_path = os.path.join(os.getcwd(), f"深夜食堂 - {sheet_unit}.xlsx")
+    output_path = os.path.join(os.getcwd(), f"深夜食堂 - 修ㄟ味噌湯(修正).xlsx")
     wb.save(output_path)
 
     print(f"✅ Excel exported successfully to {output_path}")
 
-    driver.close()
-    driver.quit()
 
-    # 欄位名稱
-    columns = ["單位","日期", "姓名", "勤務項目", "開始時間", "結束時間", "深夜勤務時數", "金額", "錯誤種類"]
 
     # 建立 DataFrame
-    df = pd.DataFrame(sign_sheet, columns=columns)
+    df = pd.DataFrame(sign_sheet, columns=header)
 
     # 依單位分組
     grouped = df.groupby('單位')
 
     # 建立 Excel 檔
-    output_path2 = '深夜食堂 - 千層明太子.xlsx'
+    output_path2 = '深夜食堂 - 千層明太子(簽名).xlsx'
     with pd.ExcelWriter(output_path2, engine='openpyxl') as writer:
         for unit, group in grouped:
             # 去掉「單位」欄位
@@ -544,6 +575,7 @@ def bug(data):
 
 
     os.startfile(output_path)
+    os.startfile(output_path2)
 
     input('輸入任意鍵結束')
 
