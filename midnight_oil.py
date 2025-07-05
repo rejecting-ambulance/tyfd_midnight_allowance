@@ -6,6 +6,8 @@ from selenium.webdriver.support.ui import WebDriverWait #等待載入
 from selenium.webdriver.support import expected_conditions as EC #等待載入
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementNotInteractableException, StaleElementReferenceException
+
 #excel操作
 import openpyxl
 from openpyxl import load_workbook
@@ -118,11 +120,13 @@ def select_click_xpath(xpath_1, xpath_2, driver, wait, msg1 =  '', msg2 = ''):
         element = wait.until(EC.element_to_be_clickable((By.XPATH, xpath_1)))
         element.click()
         print(msg1)
+
     except Exception as e:
         try:
             element = wait.until(EC.element_to_be_clickable((By.XPATH, xpath_2)))
             element.click()
             print(msg2)
+
         except Exception as e:
             print(f"{e}：{xpath_1}、{xpath_2} 都找不到")
     
@@ -234,20 +238,33 @@ def format_excel(output_path):
     wb.save(output_path)
     print(f"✅ Excel Sign sheet exported successfully to： {output_path}")
 
-
-
 def comapre_times(driver, wait, data, unit):      #爬蟲裡面的比對時間區段
 
     dropdown_by_value('_selYEAR',data['year'], driver, wait)
     dropdown_by_value('_selMONTH',data['month'], driver, wait)
     click_by_id('_btnQuery', driver, wait)    #點選查詢
 
-    try:
-        wait.until(EC.element_to_be_clickable((By.ID, '_btnQuery')))
-        time.sleep(2)
-    except TimeoutError as e:
-        print(e)
-        return 0
+    # 重試機制：最多等三次
+    retry_count = 0
+    max_retries = 3
+
+    while retry_count < max_retries:
+        try:
+            wait.until(EC.element_to_be_clickable((By.ID, '_btnQuery')))
+            time.sleep(2)
+            print(f"✅ 查詢成功 (第 {retry_count + 1} 次嘗試)\n")
+            break  # 成功就跳出迴圈
+        except (TimeoutException, NoSuchElementException, ElementNotInteractableException, StaleElementReferenceException) as e:
+            retry_count += 1
+            if retry_count < max_retries:
+                print(f"⚠️ 查詢失敗，正在重試... (第 {retry_count} 次失敗，還剩 {max_retries - retry_count} 次機會)")
+                #print(f"錯誤類型: {type(e).__name__}")
+                print(f"錯誤類型: {type(e).__name__}")
+                time.sleep(1)  # 等待1秒後重試
+            else:
+                print(f"❌ 查詢失敗，已達最大重試次數 ({max_retries} 次)")
+                print(f"錯誤訊息: {e}")
+                return [], []  # 返回空的 wrong_array 和 table_content
 
     # Collect all rows first
     table = driver.find_element(By.XPATH, '//*[@id="frm"]/table/tbody/tr[5]/td/table/tbody')
@@ -266,8 +283,6 @@ def comapre_times(driver, wait, data, unit):      #爬蟲裡面的比對時間�
         cell_values = [cell.text.strip() for cell in cells]
         cell_values.insert(0, unit)
 
-
-
         # Skip header or empty rows
         if '開始時間' in cell_values or len(cell_values) < 7:
             continue
@@ -279,171 +294,134 @@ def comapre_times(driver, wait, data, unit):      #爬蟲裡面的比對時間�
             wrong_type = "案號重複(Red)"
             cell_values = insert_type(cell_values, wrong_type)
 
-
         table_content.append(cell_values)
 
     if len(table_content) == 0:
-        print('🚑查無資料')
+        print('🆗 查無資料\n')
+        return [], []
 
-        
+    # ======= 第一階段：檢查每筆記錄的時間長短 =======
     origin_person = ''
     person_number = 0
+    
     for i in range(len(table_content)):
-        if i == len(table_content) - 1:
-        
-            current = table_content[i]
-            try:
-                start_current = datetime.strptime(current[4], "%Y/%m/%d %H:%M")
-            except ValueError:
-                print(f"⚠️ 時間格式錯誤：{current[4]}")
-                continue
-
-            try:
-                end_current = datetime.strptime(current[5], "%Y/%m/%d %H:%M")
-            except ValueError:
-                print(f"⚠️ 時間格式錯誤：{current[5]}")
-                continue
-
-            person_current = current[2]
-
-            if origin_person != person_current:    # Check whether the next people
-                origin_person = person_current
-                change = 1
-                person_number = i
-                print('')
-            else:
-                change = 0
-
-            try:
-                # Compare the short or long term
-                current_difference = end_current - start_current
-
-                if current_difference <= timedelta(minutes=5):
-                    print(f"⚠️ Row  {i + 1} too short : {person_current}-{i + 1 - person_number}")
-                    wrong_type = f"區間過短(<5分鐘) (no.{i + 1 - person_number})"
-                    table_content[i] = insert_type(table_content[i], wrong_type)
-                
-                elif current_difference >= timedelta(hours=6):
-                    print(f"⚠️ Row  {i + 1} too long : {person_current}-{i + 1 - person_number}")
-                    wrong_type = f"區間過長(>6小時) (no.{i + 1 - person_number})"
-                    table_content[i] = insert_type(table_content[i], wrong_type)
-                     
-            except Exception as e:
-                print(f"⚠️ Rows {i + 1} and {i + 2} : Error comparing ")
-                print(f"   {current}")
-                print(f"   {next_row}")
-                print(f"   Error: {e}")
-                wrong_type = f"查詢錯誤(no.{i + 1 - person_number}.{i + 2 - person_number})"
-                table_content[i] = insert_type(table_content[i], wrong_type)
-                table_content[i + 1] = insert_type(table_content[i + 1], wrong_type)    
-
-            if change :   # Only compare for who has one record
-                print(f"✅ Row  {i + 1} correct : {person_current}-{i + 1 - person_number}")
-                table_content[i] = insert_type(table_content[i], '')
-                             
-            break
-
-
         current = table_content[i]
-        next_row = table_content[i + 1]
+        person_current = current[2]
         
-        try:
-            start_next = datetime.strptime(next_row[4], "%Y/%m/%d %H:%M")
-        except ValueError:
-            print(f"⚠️ 時間格式錯誤：{next_row[4]}")
-            continue
+        # 檢查是否為新的人員
+        if origin_person != person_current:
+            origin_person = person_current
+            person_number = i
+            # 只在第一個人之後印空行分隔
+            #if i > 0:
+            #    print('')
         
+        # 解析時間
         try:
             start_current = datetime.strptime(current[4], "%Y/%m/%d %H:%M")
-        except ValueError:
-            print(f"⚠️ 時間格式錯誤：{current[4]}")
-            continue
-
-        try:
             end_current = datetime.strptime(current[5], "%Y/%m/%d %H:%M")
-        except ValueError:
-            print(f"⚠️ 時間格式錯誤：{current[5]}")
-            continue
-
-
-        person_current = current[2]
-        person_next = next_row[2]
-
-        if origin_person != person_current:    # Check whether the new person
-            origin_person = person_current
-            change = 1
-            person_number = i
-            print('')
-        else:
-            change = 0
-
-
-
-        try:
-            # Compare the short or long term
-            current_difference = end_current - start_current
-
-            if current_difference <= timedelta(minutes=5):
-                print(f"⚠️ Row  {i + 1} too short : {person_current}-{i + 1 - person_number}")
-                wrong_type = f"區間過短(<5分鐘) (no.{i + 1 - person_number})"
-                table_content[i] = insert_type(table_content[i], wrong_type)
-            
-            elif current_difference >= timedelta(hours=6):
-                print(f"⚠️ Row  {i + 1} too long : {person_current}-{i + 1 - person_number}")
-                wrong_type = f"區間過長(>6小時) (no.{i + 1 - person_number})"
-                table_content[i] = insert_type(table_content[i], wrong_type)
-
-
-
-            if person_current != person_next and change :   # Only compare for who has one record
-                print(f"✅ Row  {i + 1} correct : {person_current}-{i + 1 - person_number}")
-                table_content[i] = insert_type(table_content[i], '')
-                continue
-            elif person_current != person_next :   #if next person change, not to compare
-                continue
-
-
-            # Compare colapse
-            if start_next <= end_current:       
-                
-                print(f"⚠️ Rows {i + 1} and {i + 2} overlap : {person_current}-{i + 1 - person_number}.{i + 2 - person_number}")
-                wrong_type = f"時間重疊 (no.{i + 1 - person_number}.{i + 2 - person_number})"
-                table_content[i] = insert_type(table_content[i], wrong_type)
-                table_content[i + 1] = insert_type(table_content[i + 1], wrong_type)                
-
-            elif start_next > end_current:
-                print(f"✅ Rows {i + 1} and {i + 2} correct : {person_current}-{i + 1 - person_number}.{i + 2 - person_number}")
-                table_content[i] = insert_type(table_content[i], '')
-                table_content[i + 1] = insert_type(table_content[i + 1], '')
-                
-
-
-        except Exception as e:
-            print(f"⚠️ Rows {i + 1} and {i + 2} : Error comparing ")
-            print(f"   {current}")
-            print(f"   {next_row}")
-            print(f"   Error: {e}")
-            wrong_type = f"查詢錯誤(no.{i + 1 - person_number}.{i + 2 - person_number})"
+        except ValueError as e:
+            print(f"⚠️ 時間格式錯誤 Row {i + 1}: {current[4]} 或 {current[5]}")
+            wrong_type = f"時間格式錯誤 (no.{i + 1 - person_number})"
             table_content[i] = insert_type(table_content[i], wrong_type)
-            table_content[i + 1] = insert_type(table_content[i + 1], wrong_type)
-
-
-    for row in table_content:
+            continue
         
+        # 檢查時間區間長短
+        current_difference = end_current - start_current
+        
+        if current_difference <= timedelta(minutes=5):
+            print(f"🔺 Row {i + 1} too short : {person_current}-{i + 1 - person_number}")
+            wrong_type = f"區間過短(<5分鐘) (no.{i + 1 - person_number})"
+            table_content[i] = insert_type(table_content[i], wrong_type)
+        elif current_difference >= timedelta(hours=6):
+            print(f"🔺 Row {i + 1} too long : {person_current}-{i + 1 - person_number}")
+            wrong_type = f"區間過長(>6小時) (no.{i + 1 - person_number})"
+            table_content[i] = insert_type(table_content[i], wrong_type)
+        else:
+            # 如果時間長短正常，先標記為空字串（後續可能因重疊而更新）
+            table_content[i] = insert_type(table_content[i], '')
+
+    # ======= 第二階段：檢查同一人員的時間重疊 =======
+    origin_person = ''
+    person_number = 0
+    
+    for i in range(len(table_content)):
+        current = table_content[i]
+        person_current = current[2]
+        
+        # 檢查是否為新的人員（第二階段不印空行）
+        if origin_person != person_current:
+            origin_person = person_current
+            person_number = i
+        
+        # 如果不是最後一筆，且下一筆是同一人，則檢查重疊
+        if i < len(table_content) - 1:
+            next_row = table_content[i + 1]
+            person_next = next_row[2]
+            
+            # 只有當下一筆是同一人時才檢查重疊
+            if person_current == person_next:
+                try:
+                    start_current = datetime.strptime(current[4], "%Y/%m/%d %H:%M")
+                    end_current = datetime.strptime(current[5], "%Y/%m/%d %H:%M")
+                    start_next = datetime.strptime(next_row[4], "%Y/%m/%d %H:%M")
+                except ValueError:
+                    print(f"⚠️ 時間格式錯誤，無法比較 Row {i + 1} 和 {i + 2}")
+                    wrong_type = f"時間格式錯誤 (no.{i + 1 - person_number}.{i + 2 - person_number})"
+                    # 更新錯誤類型（可能已有其他錯誤）
+                    if len(table_content[i]) >= 9 and table_content[i][8]:
+                        table_content[i][8] = f"{table_content[i][8]},{wrong_type}".strip(',')
+                    else:
+                        table_content[i] = insert_type(table_content[i], wrong_type)
+                    if len(table_content[i + 1]) >= 9 and table_content[i + 1][8]:
+                        table_content[i + 1][8] = f"{table_content[i + 1][8]},{wrong_type}".strip(',')
+                    else:
+                        table_content[i + 1] = insert_type(table_content[i + 1], wrong_type)
+                    continue
+                
+                # 檢查時間重疊
+                if start_next <= end_current:
+                    print(f"⚠️ Rows {i + 1} and {i + 2} overlap : {person_current}-{i + 1 - person_number}.{i + 2 - person_number}")
+                    wrong_type = f"時間重疊 (no.{i + 1 - person_number}.{i + 2 - person_number})"
+                    
+                    # 更新錯誤類型（可能已有其他錯誤）
+                    if len(table_content[i]) >= 9 and table_content[i][8]:
+                        table_content[i][8] = f"{table_content[i][8]},{wrong_type}".strip(',')
+                    else:
+                        table_content[i] = insert_type(table_content[i], wrong_type)
+                    if len(table_content[i + 1]) >= 9 and table_content[i + 1][8]:
+                        table_content[i + 1][8] = f"{table_content[i + 1][8]},{wrong_type}".strip(',')
+                    else:
+                        table_content[i + 1] = insert_type(table_content[i + 1], wrong_type)
+                else:
+                    None
+                    #print(f"✅ Rows {i + 1} and {i + 2} correct : {person_current}-{i + 1 - person_number}.{i + 2 - person_number}")
+        else:
+            # 最後一筆資料，只要時間長短正常就標記為正確
+            if len(table_content[i]) < 9 or not table_content[i][8]:
+                None
+                #print(f"✅ Row {i + 1} correct : {person_current}-{i + 1 - person_number}")
+
+    # 收集有錯誤的資料
+    for row in table_content:
         if len(row) >= 9 and row[8]:
             wrong_array.append(row)
 
+    # 檢查是否有錯誤，如果沒有錯誤顯示全對訊息
+    if len(wrong_array) == 0:
+        print("🟢 所有資料都正確！沒有發現任何錯誤。")
+    else:
+        print(f"🆖 共發現 {len(wrong_array)} 筆有錯誤的資料")
+
     print('\n')
     return wrong_array, table_content
-
-
 
 def bug(data):
     print('\nWellcome to the fucking far kingddom - Shrek\n')
     #開啟Chrome瀏覽器、勤務系統
     #driver = webdriver.Chrome()
     driver = setup_chrome_driver()
-    wait = WebDriverWait(driver, 10)  # 最長等待 10 秒
+    wait = WebDriverWait(driver, 30)  # 最長等待 10 秒
 
     driver.get('https://dutymgt.tyfd.gov.tw/tyfd119/login119')
 
@@ -475,7 +453,7 @@ def bug(data):
     #click_by_xpath('//*[@id="item23"]/tbody/tr/td[2]/a/font', driver, wait)   #深夜危勞按鈕
 
     select_click_xpath('//*[@id="folder17"]/tbody/tr[1]/td/a[1]/img', '//*[@id="folder14"]/tbody/tr[1]/td/a[1]/img', driver, wait)  #相關業務
-    select_click_xpath('//*[@id="item23"]/tbody/tr/td[2]/a/font', '//*[@id="item20"]/tbody/tr/td[2]/a/font', driver, wait, '沒記錯的話，上次見到你是一個月前呢，大隊承辦', '歡迎回來，分隊承辦！')  #深夜危勞性勤務津貼個人申請表
+    select_click_xpath('//*[@id="item23"]/tbody/tr/td[2]/a/font', '//*[@id="item20"]/tbody/tr/td[2]/a/font', driver, wait, '沒記錯的話，上次見到你是一個月前呢，大隊承辦\n', '好久不見，分隊承辦！\n')  #深夜危勞性勤務津貼個人申請表
 
 
     #轉換右方主要內容
@@ -492,10 +470,9 @@ def bug(data):
     except:
         raise TimeoutError('連線逾時，請關閉後重新操作')
 
-
-
     except_sheet = []
     sign_sheet = []
+    unit_error_count = {}  # 用來統計每個單位的錯誤筆數
 
     dropdown_id = '_selDeptno'
     
@@ -515,15 +492,34 @@ def bug(data):
         print(f"🔽 Selecting: {text} (value={value})")
 
         wrong, money_sheet = comapre_times(driver, wait, data, text)
+        
+        # 統計該單位的錯誤筆數
+        unit_error_count[text] = len(wrong)
+        
         for row in wrong:
             except_sheet.append(row)
         for row in money_sheet:
             sign_sheet.append(row)
 
-
     driver.close()
     driver.quit()
    
+    # ========== 查詢結束統計 ==========
+    print(str_line('查詢結束統計'))
+    total_errors = 0
+    for unit, count in unit_error_count.items():
+        if count > 0:
+            print(f"🔺 {unit}: {count} 筆錯誤")
+            total_errors += count
+        else:
+            None
+            #print(f"🟢 {unit}: 無錯誤")
+    
+    print(f"\n📊 總計: {total_errors} 筆錯誤")
+    if total_errors == 0:
+        print("🎉 恭喜！所有單位都沒有錯誤！")
+    print("=" * 50)
+    
     clean_sheet = remove_duplicates(except_sheet)
     
     # Create a new workbook and sheet
@@ -542,14 +538,35 @@ def bug(data):
     else:
         ws['A2'] = 'All Carrot'
 
+    # 設定欄寬
+    column_widths = {
+        'A': 12,  # 單位
+        'B': 12,  # 日期
+        'C': 10,  # 姓名
+        'D': 20,  # 勤務項目
+        'E': 18,  # 開始時間
+        'F': 18,  # 結束時間
+        'G': 15,  # 深夜勤務時數
+        'H': 8,   # 金額
+        'I': 25   # 錯誤種類
+    }
+
+    # 應用欄寬設定
+    for column, width in column_widths.items():
+        ws.column_dimensions[column].width = width
+
+    # 或者使用另一種方式設定欄寬（根據內容自動調整）
+    # for column_cells in ws.columns:
+    #     length = max(len(str(cell.value)) for cell in column_cells if cell.value)
+    #     ws.column_dimensions[column_cells[0].column_letter].width = length + 2
+
     # Save Excel file
     output_path = os.path.join(os.getcwd(), f"深夜食堂 - 修ㄟ味噌湯(修正).xlsx")
     output_path = f"深夜食堂 - 修ㄟ味噌湯(修正).xlsx"
     wb.save(output_path)
 
-    print(f"✅ Excel exported successfully to： {output_path}")
-
-
+    
+    print(f"✅ Excel Correct sheet exported successfully to： {output_path}")
 
     # 建立 DataFrame
     df = pd.DataFrame(sign_sheet, columns=header)
@@ -573,14 +590,10 @@ def bug(data):
     # ⭐ 用 openpyxl 處理合併單元格和加標題
     format_excel(output_path2)
 
-
-
-
     os.startfile(output_path)
     os.startfile(output_path2)
 
-    input('輸入任意鍵結束')
-
+    input('\n===醒醒，天亮囉，下班啦===\n')
     
 
 ################################################主程式################################################
