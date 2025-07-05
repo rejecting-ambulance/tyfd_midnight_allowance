@@ -22,11 +22,131 @@ import os
 import pandas as pd
 import json
 
+import tkinter as tk
+from tkinter import messagebox
+
 """
 
 
 
 """
+def get_user_input(config_path="config.json"):
+    def on_submit(event=None):
+        data['username'] = entry_username.get()
+        data['password'] = entry_password.get()
+        data['year']     = entry_year.get()
+        data['month']    = entry_month.get()
+        data['unit_dic'] = cfg.get("unit_dic", {})
+
+        # 檢查空值
+        if not all([data['username'], data['password'], data['year'], data['month']]):
+            messagebox.showwarning("欄位不完整", "請填寫所有欄位！")
+            return
+
+        # 檢查年、月是否為整數
+        try:
+            year_int = int(data['year'])
+            month_int = int(data['month'])
+        except ValueError:
+            messagebox.showwarning("格式錯誤", "年與月必須為整數！")
+            return
+
+        # 檢查年範圍
+        if not (100 <= year_int <= 199):
+            messagebox.showwarning("年份錯誤", "年份錯誤，你是哪個時代的人？")
+            return
+
+        # 檢查月範圍
+        if not (1 <= month_int <= 12):
+            messagebox.showwarning("月份錯誤", "月份錯誤，你在哪個星球？")
+            return
+
+        if remember_var.get():
+            cfg.update({k: data[k] for k in ("username", "password", "year", "month")})
+        else:
+            for k in ("username", "password", "year", "month"):
+                cfg.pop(k, None)
+
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=4)
+
+        root.destroy()
+
+
+    # --- 密碼顯示 / 隱藏 ---
+    def show_pwd(_): entry_password.config(show='')
+    def hide_pwd(_): entry_password.config(show='*')
+
+    # --- 讀取舊設定 ---
+    if os.path.exists(config_path):
+        with open(config_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+    else:
+        cfg = {}
+
+    data = {}
+    root = tk.Tk()
+    root.title("登入與查詢設定")
+    root.geometry("600x450")
+    root.resizable(False, False)
+
+    font_style = ("標楷體", 20)
+
+    # 帳號
+    tk.Label(root, text="帳號：", font=font_style).grid(row=0, column=0, sticky='e', padx=10, pady=10)
+    entry_username = tk.Entry(root, width=27, font=font_style)
+    entry_username.insert(0, cfg.get("username", ""))
+    entry_username.grid(row=0, column=1, columnspan=2, padx=10, pady=10)
+
+    # 密碼 + 眼睛
+    tk.Label(root, text="密碼：", font=font_style).grid(row=1, column=0, sticky='e', padx=10, pady=10)
+
+    pwd_frame = tk.Frame(root)
+    
+    pwd_frame.grid(row=1, column=1, columnspan=2, padx=10, pady=10, sticky='w')
+
+    pwd_frame.grid_columnconfigure(0, weight=1)
+    pwd_frame.grid_columnconfigure(1, minsize=12)
+    pwd_frame.grid_columnconfigure(2, minsize=60)
+
+    entry_password = tk.Entry(pwd_frame, show='*', width=22, font=font_style)
+    entry_password.insert(0, cfg.get("password", ""))
+    entry_password.grid(row=0, column=0, sticky='ew')
+
+    spacer = tk.Label(pwd_frame, text='', font=font_style)
+    spacer.grid(row=0, column=1)
+
+    btn_eye = tk.Button(pwd_frame, text='👁', width=4, font=font_style)
+    btn_eye.grid(row=0, column=2)
+
+    btn_eye.bind('<ButtonPress>', lambda e: entry_password.config(show=''))
+    btn_eye.bind('<ButtonRelease>', lambda e: entry_password.config(show='*'))
+
+    # 年 / 月
+    tk.Label(root, text="查詢年：", font=font_style).grid(row=2, column=0, sticky='e', padx=10, pady=10)
+    entry_year = tk.Entry(root, width=27, font=font_style)
+    entry_year.insert(0, cfg.get("year", ""))
+    entry_year.grid(row=2, column=1, columnspan=2, padx=10, pady=10)
+
+    tk.Label(root, text="查詢月：", font=font_style).grid(row=3, column=0, sticky='e', padx=10, pady=10)
+    entry_month = tk.Entry(root, width=27, font=font_style)
+    entry_month.insert(0, cfg.get("month", ""))
+    entry_month.grid(row=3, column=1, columnspan=2, padx=10, pady=10)
+
+    # 記住資訊 (置中)
+    remember_var = tk.BooleanVar(value=True)
+    tk.Checkbutton(root, text="記住資訊", variable=remember_var, font=font_style)\
+        .grid(row=4, column=0, columnspan=3, pady=15, sticky='n')
+
+    # 確定按鈕 (置中)
+    tk.Button(root, text="確定", command=on_submit, font=font_style)\
+        .grid(row=5, column=0, columnspan=3, pady=25, sticky='n')
+
+    # Enter 送出
+    root.bind('<Return>', on_submit)
+
+    root.mainloop()
+    return data
 
 
 def add_zero(cc):   #1位補0
@@ -240,8 +360,8 @@ def format_excel(output_path):
 
 def comapre_times(driver, wait, data, unit):      #爬蟲裡面的比對時間區段
 
-    dropdown_by_value('_selYEAR',data['year'], driver, wait)
-    dropdown_by_value('_selMONTH',data['month'], driver, wait)
+    dropdown_by_value('_selYEAR',str(int(data['year'])), driver, wait)
+    dropdown_by_value('_selMONTH',add_zero(data['month']), driver, wait)
     click_by_id('_btnQuery', driver, wait)    #點選查詢
 
     # 重試機制：最多等三次
@@ -437,7 +557,7 @@ def bug(data):
         frameM = driver.find_element(By.NAME, 'ehrFrame')
     except Exception as e:
         input(f'{e}帳密錯誤，請確認config.json')
-        raise Exception
+        return False
 
     print(str_line('登入成功'))
     
@@ -599,5 +719,5 @@ def bug(data):
 ################################################主程式################################################
 if __name__ == '__main__':
 
-    config = load_accounts()
+    config = get_user_input()
     bug(config)
