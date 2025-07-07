@@ -24,14 +24,17 @@ import json
 
 import tkinter as tk
 from tkinter import messagebox
+from threading import Thread
 
 """
 
 
 
 """
+
 def get_user_input(config_path="config.json"):
     def on_submit(event=None):
+        # 獲取輸入資料
         data['username'] = entry_username.get()
         data['password'] = entry_password.get()
         data['year']     = entry_year.get()
@@ -51,31 +54,68 @@ def get_user_input(config_path="config.json"):
             messagebox.showwarning("格式錯誤", "年與月必須為整數！")
             return
 
-        # 檢查年範圍
+        # 檢查年、月範圍
         if not (100 <= year_int <= 199):
             messagebox.showwarning("年份錯誤", "年份錯誤，你是哪個時代的人？")
             return
-
-        # 檢查月範圍
         if not (1 <= month_int <= 12):
             messagebox.showwarning("月份錯誤", "月份錯誤，你在哪個星球？")
             return
 
-        if remember_var.get():
-            cfg.update({k: data[k] for k in ("username", "password", "year", "month")})
-        else:
-            for k in ("username", "password", "year", "month"):
-                cfg.pop(k, None)
+        # 禁用確定按鈕，防止重複點擊
+        btn_submit.config(state='disabled', text='驗證中...')
+        root.update()
 
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=4)
+        # 在背景執行緒中進行登入驗證
+        def thread_task():
+            try:
+                # 登入驗證
+                login_success = login(data)
+                
+                # 使用 after 方法在主執行緒中更新 GUI
+                root.after(0, handle_login_result, login_success)
+            except Exception as e:
+                # 發生異常時也要在主執行緒中處理
+                root.after(0, handle_login_error, str(e))
 
-        root.destroy()
+        # 啟動背景執行緒
+        Thread(target=thread_task, daemon=True).start()
 
+    def handle_login_result(login_success):
+        """在主執行緒中處理登入結果"""
+        # 重新啟用確定按鈕
+        btn_submit.config(state='normal', text='確定')
+        
+        if not login_success:
+            messagebox.showerror("登入失敗", "帳號或密碼錯誤，請重新輸入！")
+            return
+
+        # 登入成功，儲存設定並關閉視窗
+        try:
+            # 儲存或移除帳密資訊
+            if remember_var.get():
+                cfg.update({k: data[k] for k in ("username", "password", "year", "month")})
+            else:
+                for k in ("username", "password", "year", "month"):
+                    cfg.pop(k, None)
+
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=4)
+
+            # 關閉 GUI
+            root.destroy()
+        except Exception as e:
+            messagebox.showerror("儲存失敗", f"無法儲存設定檔：{str(e)}")
+
+    def handle_login_error(error_msg):
+        """在主執行緒中處理登入異常"""
+        # 重新啟用確定按鈕
+        btn_submit.config(state='normal', text='確定')
+        messagebox.showerror("系統錯誤", f"登入過程發生錯誤：{error_msg}")
 
     # --- 密碼顯示 / 隱藏 ---
     def show_pwd(_): entry_password.config(show='')
-    def hide_pwd(_): entry_password.config(show='*')
+    def hide_pwd(_): entry_password.config(show='˙')
 
     # --- 讀取舊設定 ---
     if os.path.exists(config_path):
@@ -86,30 +126,31 @@ def get_user_input(config_path="config.json"):
 
     data = {}
     root = tk.Tk()
-    root.title("登入與查詢設定")
+    root.title("登入-消防勤務管理系統")
     root.geometry("600x450")
     root.resizable(False, False)
+
+    # 背景圖（放最上層）
+    root.configure(bg='#FFF8DC')  # 這裡改成你想要的顏色代碼
 
     font_style = ("標楷體", 20)
 
     # 帳號
-    tk.Label(root, text="帳號：", font=font_style).grid(row=0, column=0, sticky='e', padx=10, pady=10)
+    tk.Label(root, text="帳號：", font=font_style, bg=root['bg']).grid(row=0, column=0, sticky='e', padx=10, pady=10)
     entry_username = tk.Entry(root, width=27, font=font_style)
     entry_username.insert(0, cfg.get("username", ""))
     entry_username.grid(row=0, column=1, columnspan=2, padx=10, pady=10)
 
     # 密碼 + 眼睛
-    tk.Label(root, text="密碼：", font=font_style).grid(row=1, column=0, sticky='e', padx=10, pady=10)
+    tk.Label(root, text="密碼：", font=font_style, bg=root['bg']).grid(row=1, column=0, sticky='e', padx=10, pady=10)
 
     pwd_frame = tk.Frame(root)
-    
     pwd_frame.grid(row=1, column=1, columnspan=2, padx=10, pady=10, sticky='w')
-
     pwd_frame.grid_columnconfigure(0, weight=1)
     pwd_frame.grid_columnconfigure(1, minsize=12)
     pwd_frame.grid_columnconfigure(2, minsize=60)
 
-    entry_password = tk.Entry(pwd_frame, show='*', width=22, font=font_style)
+    entry_password = tk.Entry(pwd_frame, show='˙', width=22, font=font_style)
     entry_password.insert(0, cfg.get("password", ""))
     entry_password.grid(row=0, column=0, sticky='ew')
 
@@ -120,27 +161,27 @@ def get_user_input(config_path="config.json"):
     btn_eye.grid(row=0, column=2)
 
     btn_eye.bind('<ButtonPress>', lambda e: entry_password.config(show=''))
-    btn_eye.bind('<ButtonRelease>', lambda e: entry_password.config(show='*'))
+    btn_eye.bind('<ButtonRelease>', lambda e: entry_password.config(show='˙'))
 
     # 年 / 月
-    tk.Label(root, text="查詢年：", font=font_style).grid(row=2, column=0, sticky='e', padx=10, pady=10)
+    tk.Label(root, text="查詢年：", font=font_style, bg=root['bg']).grid(row=2, column=0, sticky='e', padx=10, pady=10)
     entry_year = tk.Entry(root, width=27, font=font_style)
     entry_year.insert(0, cfg.get("year", ""))
     entry_year.grid(row=2, column=1, columnspan=2, padx=10, pady=10)
 
-    tk.Label(root, text="查詢月：", font=font_style).grid(row=3, column=0, sticky='e', padx=10, pady=10)
+    tk.Label(root, text="查詢月：", font=font_style, bg=root['bg']).grid(row=3, column=0, sticky='e', padx=10, pady=10)
     entry_month = tk.Entry(root, width=27, font=font_style)
     entry_month.insert(0, cfg.get("month", ""))
     entry_month.grid(row=3, column=1, columnspan=2, padx=10, pady=10)
 
     # 記住資訊 (置中)
     remember_var = tk.BooleanVar(value=True)
-    tk.Checkbutton(root, text="記住資訊", variable=remember_var, font=font_style)\
+    tk.Checkbutton(root, text="記住資訊", variable=remember_var, font=font_style, bg=root['bg'])\
         .grid(row=4, column=0, columnspan=3, pady=15, sticky='n')
 
-    # 確定按鈕 (置中)
-    tk.Button(root, text="確定", command=on_submit, font=font_style)\
-        .grid(row=5, column=0, columnspan=3, pady=25, sticky='n')
+    # 確定按鈕 (置中) - 注意這裡改成變數，方便後續控制
+    btn_submit = tk.Button(root, text="確定", command=on_submit, font=font_style)
+    btn_submit.grid(row=5, column=0, columnspan=3, pady=25, sticky='n')
 
     # Enter 送出
     root.bind('<Return>', on_submit)
@@ -536,6 +577,30 @@ def comapre_times(driver, wait, data, unit):      #爬蟲裡面的比對時間�
     print('\n')
     return wrong_array, table_content
 
+def login(data):
+
+    driver = setup_chrome_driver()
+    wait = WebDriverWait(driver, 10)  # 最長等待 10 秒
+
+    driver.get('https://dutymgt.tyfd.gov.tw/tyfd119/login119')
+
+    #登入操作
+    username = driver.find_element(By.ID,"_txtUsername")
+    password = driver.find_element(By.ID,"_txtPassword")
+    username.send_keys(data['username'])
+    password.send_keys(data['password'])
+
+    click_by_name('login', driver, wait)  #點選登入
+    try:
+        wait.until(EC.presence_of_element_located((By.NAME, 'ehrFrame')))
+        frameM = driver.find_element(By.NAME, 'ehrFrame')
+        
+    except Exception as e:
+        return False
+
+    return True
+    
+
 def bug(data):
     print('\nWellcome to the fucking far kingddom - Shrek\n')
     #開啟Chrome瀏覽器、勤務系統
@@ -552,15 +617,12 @@ def bug(data):
     password.send_keys(data['password'])
 
     click_by_name('login', driver, wait)  #點選登入
-    try:
-        wait.until(EC.presence_of_element_located((By.NAME, 'ehrFrame')))
-        frameM = driver.find_element(By.NAME, 'ehrFrame')
-    except Exception as e:
-        input(f'{e}帳密錯誤，請確認config.json')
-        return False
+    wait.until(EC.presence_of_element_located((By.NAME, 'ehrFrame')))
+    frameM = driver.find_element(By.NAME, 'ehrFrame')
 
     print(str_line('登入成功'))
-    
+
+
     #切換到選單Frame|#frameset是組合，不是Frame
     frameM = driver.find_element(By.NAME, 'ehrFrame')
     driver.switch_to.frame(frameM)
